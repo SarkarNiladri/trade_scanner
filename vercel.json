@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/cron.js": { "maxDuration": 10 },
+    "api/scan.js": { "maxDuration": 10 }
+  },
+  "rewrites": [
+    { "source": "/api/keepalive", "destination": "/api/keep-alive" }
+  ]
+}

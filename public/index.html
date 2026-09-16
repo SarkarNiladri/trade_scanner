@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SwingScan — AI Swing Trading Scanner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+
+<div id="app">
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">⚡ SwingScan</div>
+      <div class="header-badges">
+        <div class="badge status-open" id="statusBadge">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">Connecting…</span>
+        </div>
+        <div class="badge" id="niftyBadge">— ADX</div>
+      </div>
+    </div>
+    <div class="clock" id="clock">--:--:-- IST</div>
+    <div class="header-right">
+      <button class="btn-icon" id="themeBtn" onclick="toggleTheme()">🌙</button>
+    </div>
+  </div>
+
+  <div class="config-bar-wrap">
+    <div class="config-bar">
+      <label>API Password</label>
+      <input type="password" id="apiPwd" placeholder="if configured"
+             oninput="api.setPassword(this.value)" />
+      <button class="btn-connect" onclick="app.init()">Connect</button>
+    </div>
+  </div>
+
+  <div class="tabs-wrap">
+    <div class="tabs">
+      <button class="tab active" data-tab="signals" onclick="app.switchTab('signals')">📊 Live Signals</button>
+      <button class="tab" data-tab="tracker" onclick="app.switchTab('tracker')">📈 Performance</button>
+    </div>
+  </div>
+
+  <!-- SIGNALS TAB -->
+  <div id="tab-signals" class="tab-content active">
+    <div class="sentiment-panel">
+      <div class="sentiment-head">
+        <div class="sentiment-title-group">
+          <span class="sentiment-title">🧠 Market Sentiment</span>
+          <span class="sentiment-updated" id="sentimentUpdated">Not loaded</span>
+        </div>
+        <div class="sentiment-actions">
+          <button class="btn" onclick="app.loadSentiment()">🔄 Refresh</button>
+          <button class="btn" onclick="app.forceSentimentRefresh()" title="Force re-analyze">⚡ Re-analyze</button>
+        </div>
+      </div>
+      <div class="sentiment-grid" id="sentimentGrid">
+        <div class="sentiment-empty">Click Refresh to load market sentiment…</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Real-Time Scan</div>
+        <div class="panel-actions">
+          <span id="scanStatus" class="scan-status"></span>
+          <button class="btn primary" id="btnStartScan" onclick="app.startScan()">▶ Start Scan</button>
+          <button class="btn" id="btnStopScan" onclick="app.stopScan()">⏹ Stop</button>
+        </div>
+      </div>
+
+      <div id="progressWrap" class="progress-wrap" style="display:none;">
+        <div class="progress-head">
+          <span id="progressLabel">Scanning…</span>
+          <span id="progressPct">0%</span>
+        </div>
+        <div class="progress-track"><div id="progressFill" class="progress-fill"></div></div>
+        <div class="progress-foot">
+          <span id="progressSignals" class="progress-signals">0 signals</span>
+          <span id="progressStocks">0/0 stocks</span>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th><th>Signal</th><th>Entry ₹</th><th>Live ₹</th>
+              <th>Target ₹</th><th>SL ₹</th><th>Score</th><th>ADX</th>
+            </tr>
+          </thead>
+          <tbody id="signalBody">
+            <tr><td colspan="8" class="empty">No signals yet — click Start Scan</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Activity Log</div>
+        <span class="btn" onclick="app.clearLog()">Clear</span>
+      </div>
+      <div class="log-body" id="logBody"></div>
+    </div>
+  </div>
+
+  <!-- TRACKER TAB -->
+  <div id="tab-tracker" class="tab-content">
+    <div class="metrics-grid">
+      <div class="metric-card"><div class="metric-label">Total</div><div class="metric-value" id="ptTotal">0</div></div>
+      <div class="metric-card"><div class="metric-label">Wins</div><div class="metric-value green" id="ptWins">0</div></div>
+      <div class="metric-card"><div class="metric-label">Losses</div><div class="metric-value red" id="ptLosses">0</div></div>
+      <div class="metric-card"><div class="metric-label">Win Rate</div><div class="metric-value amber" id="ptWinRate">—</div></div>
+      <div class="metric-card"><div class="metric-label">Open</div><div class="metric-value" id="ptOpen">0</div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Trade Log</div>
+        <div class="panel-actions">
+          <button class="btn" onclick="app.fetchTracker()">🔄 Refresh</button>
+          <button class="btn success" onclick="app.resolveTrades()">✓ Resolve Open</button>
+          <button class="btn danger" onclick="app.resetTracker()">Reset Week</button>
+        </div>
+      </div>
+      <div class="table-wrap tall">
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th><th>Signal</th><th>Entry ₹</th><th>Target ₹</th>
+              <th>SL ₹</th><th>Score</th><th>Outcome</th><th>P&L</th>
+            </tr>
+          </thead>
+          <tbody id="trackerBody">
+            <tr><td colspan="8" class="empty">No trades yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
