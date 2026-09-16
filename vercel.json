@@ -1,4 +1,6 @@
 {
+  "buildCommand": "echo 'no build needed'",
+  "outputDirectory": "public",
   "functions": {
     "api/cron.js": { "maxDuration": 10 },
     "api/scan.js": { "maxDuration": 10 }
