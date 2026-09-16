@@ -1,12 +1,11 @@
 {
-  "name": "swingscan-vercel",
+  "name": "trade-scanner",
   "version": "2.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": "20.x" },
+  "engines": { "node": "24.x" },
   "scripts": {
-    "dev": "node --env-file=.env.local server.js",
-    "start": "node server.js"
+    "dev": "node --env-file=.env.local scripts/dev-server.js"
   },
   "dependencies": {
     "@upstash/redis": "^1.34.3"

@@ -5,10 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT   = process.env.PORT || 3000;
-const PUBLIC = path.join(__dirname, 'public');
-const API    = path.join(__dirname, 'api');
-
+const PROJECT_ROOT = path.join(__dirname, '..');
+const PUBLIC = path.join(PROJECT_ROOT, 'public');
+const API    = path.join(PROJECT_ROOT, 'api');
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css':  'text/css; charset=utf-8',
