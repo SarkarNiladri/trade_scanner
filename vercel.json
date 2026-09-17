@@ -1,9 +1,8 @@
 {
-  "buildCommand": "echo 'no build needed'",
-  "outputDirectory": "public",
   "functions": {
-    "api/cron.js": { "maxDuration": 10 },
-    "api/scan.js": { "maxDuration": 10 }
+    "api/cron.js":       { "maxDuration": 10 },
+    "api/scan.js":       { "maxDuration": 10 },
+    "api/sentiment.js":  { "maxDuration": 60 }
   },
   "rewrites": [
     { "source": "/api/keepalive", "destination": "/api/keep-alive" }

@@ -155,31 +155,62 @@
     document.getElementById('niftyBadge').textContent =
       `${(status.nifty_trend || 'neutral').toUpperCase()} · ADX ${status.nifty_adx ?? '—'}`;
   }
-  async function loadSentiment() {
+  function renderSentiment(data) {
+  document.getElementById('sentimentUpdated').textContent =
+    data.updated_at
+      ? `Updated: ${new Date(data.updated_at).toLocaleString('en-IN')}`
+      : 'Not loaded';
+
+  let html = buildSentimentCard('📊 Overall Market', data.market);
+  for (const [sector, sdata] of Object.entries(data.sectors || {})) {
+    html += buildSentimentCard(sector, sdata);
+  }
+  document.getElementById('sentimentGrid').innerHTML =
+    html || '<div class="sentiment-empty">No data yet</div>';
+}
+
+async function loadSentiment() {
   try {
     const data = await api.getSentiment();
-    document.getElementById('sentimentUpdated').textContent =
-      data.updated_at ? `Updated: ${new Date(data.updated_at).toLocaleString('en-IN')}` : 'Not loaded';
 
-    let html = buildSentimentCard('📊 Overall Market', data.market);
-    for (const [sector, sdata] of Object.entries(data.sectors || {})) {
-      html += buildSentimentCard(sector, sdata);
-    }
-    document.getElementById('sentimentGrid').innerHTML =
-      html || '<div class="sentiment-empty">Loading…</div>';
-
-    // Auto-refresh if cache is missing or older than 30 minutes
-    const stale = !data.updated_at ||
+    const isStale = !data.updated_at ||
       (Date.now() - new Date(data.updated_at).getTime() > 30 * 60 * 1000);
 
-    if (stale && !state.sentimentRefreshing) {
-      state.sentimentRefreshing = true;
-      logAdd('Sentiment cache stale — auto-refreshing in background…', 'info');
+    // If cache is fresh, just render.
+    if (!isStale) {
+      renderSentiment(data);
+      return;
+    }
+
+    // If a refresh is already in flight, skip.
+    if (state.sentimentRefreshing) return;
+
+    state.sentimentRefreshing = true;
+    document.getElementById('sentimentGrid').innerHTML =
+      '<div class="sentiment-empty">Analyzing headlines… (this takes ~30 seconds)</div>';
+
+    try {
       await api.forceSentiment();
-      setTimeout(async () => {
-        state.sentimentRefreshing = false;
-        await loadSentiment();
-      }, 35000);
+      logAdd('Sentiment refresh triggered — polling…', 'info');
+
+      // Poll every 8s, up to 12 attempts = ~96s max
+      for (let attempt = 1; attempt <= 12; attempt++) {
+        await new Promise(r => setTimeout(r, 8000));
+        try {
+          const fresh = await api.getSentiment();
+          if (fresh.updated_at) {
+            logAdd('✅ Sentiment updated', 'success');
+            renderSentiment(fresh);
+            state.sentimentRefreshing = false;
+            return;
+          }
+        } catch (_) { /* keep polling */ }
+      }
+
+      logAdd('⚠️ Sentiment refresh timed out — try again later', 'warn');
+      renderSentiment(data);
+    } finally {
+      state.sentimentRefreshing = false;
     }
   } catch (e) {
     logAdd('Sentiment load error: ' + e.message, 'error');
