@@ -70,7 +70,7 @@ async function classifyAll(headlinesBySector) {
   const prompt =
     `You are classifying Indian stock market sentiment for multiple sectors.\n\n` +
     `For each section below, decide BULLISH, BEARISH, or NEUTRAL, assign a 0-100 confidence, ` +
-    `and give a one-line reason (max 10 words).\n\n` +
+    `and give a one-line reason (max 8 words).\n\n` +
     `${sections}\n\n` +
     `Reply with ONLY this JSON shape (no markdown, no extra text):\n` +
     `{\n` +
@@ -80,34 +80,53 @@ async function classifyAll(headlinesBySector) {
     `  ...one entry per section above...\n` +
     `}`;
 
+  const body = {
+    model: 'gpt-4o-mini',
+    max_tokens: 2500,                                     // ← was 800
+    temperature: 0.2,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: 'You are a financial sentiment classifier. Reply with valid JSON only.' },
+      { role: 'user', content: prompt },
+    ],
+  };
+
   try {
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        max_tokens: 800,
-        temperature: 0.2,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: 'You are a financial sentiment classifier. Reply with valid JSON only.' },
-          { role: 'user', content: prompt },
-        ],
-      }),
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
 
     if (!resp.ok) {
-      console.error('[sentiment] openai:', resp.status, await resp.text());
+      console.error('[sentiment] openai http:', resp.status, await resp.text());
       return fallback;
     }
 
     const data = await resp.json();
-    let text = data.choices?.[0]?.message?.content || '';
+    const choice = data.choices?.[0];
+    const finish = choice?.finish_reason;
+    let text = choice?.message?.content || '';
+
+    console.log('[sentiment] openai finish_reason:', finish, '| chars:', text.length);
+
+    // Strip any markdown fences
     text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(text);
+
+    // If the response is truncated, try to salvage by trimming to last complete brace
+    if (finish === 'length' || !text.endsWith('}')) {
+      console.warn('[sentiment] response looks truncated — attempting to salvage');
+      const lastBrace = text.lastIndexOf('}');
+      if (lastBrace > 0) text = text.slice(0, lastBrace + 1);
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      console.error('[sentiment] parse failed. first 300 chars:', text.slice(0, 300));
+      return fallback;
+    }
 
     const out = {};
     for (const name of Object.keys(headlinesBySector)) {
@@ -126,7 +145,6 @@ async function classifyAll(headlinesBySector) {
     return fallback;
   }
 }
-
 export async function getCached() {
   const cached = await kvGetJSON(KEY);
   if (cached && cached._updated && Date.now() - cached._updated < TTL * 1000) {
