@@ -52,14 +52,14 @@ function rangeFor(interval, days) {
 
 // Small in-memory cache so repeated scans don't hammer Yahoo
 const CACHE = new Map();
-const CACHE_TTL = 60 * 1000; // 60 seconds
+const CACHE_TTL_MS = interval === '1d' ? 6 * 3600 * 1000 : 60 * 1000;
 
 export async function fetchCandles(symbol, interval = '15m', days = 60) {
   const ticker = symbol.startsWith('^') ? symbol : `${symbol}.NS`;
   const cacheKey = `${ticker}|${interval}`;
   const now = Date.now();
   const hit = CACHE.get(cacheKey);
-  if (hit && now - hit.t < CACHE_TTL) return hit.data;
+  if (hit && now - hit.t < CACHE_TTL_MS) return hit.data;
 
   const range = rangeFor(interval, days);
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${range}&includePrePost=false`;
