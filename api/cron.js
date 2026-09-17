@@ -1,3 +1,4 @@
+import { waitUntil } from '@vercel/functions';
 import { SYMBOLS_100 } from './_lib/data.js';
 import { analyzeStock, getNiftyTrend } from './_lib/strategy.js';
 import { addTrade, hasNotified, markNotified } from './_lib/tracker.js';
@@ -13,13 +14,8 @@ function marketIsOpen() {
 }
 
 export default async function handler(req, res) {
-  // Entry point: no start param → kick off chain from 0
-  if (req.query.start === undefined) {
-    if (!marketIsOpen()) return res.status(200).json({ status: 'market_closed' });
-    // Fire-and-forget first batch
-    const url = `https://${req.headers.host}/api/cron?start=0`;
-    fetch(url).catch(() => {});
-    return res.status(200).json({ status: 'scan_triggered' });
+  if (!marketIsOpen()) {
+    return res.status(200).json({ status: 'market_closed' });
   }
 
   const start = Math.max(0, parseInt(req.query.start, 10) || 0);
@@ -43,10 +39,10 @@ export default async function handler(req, res) {
     }
   }
 
-  // Chain next batch
+  // Chain next batch in background — waitUntil keeps the function alive
   if (end < SYMBOLS_100.length) {
     const url = `https://${req.headers.host}/api/cron?start=${end}`;
-    fetch(url).catch(() => {});
+    waitUntil(fetch(url).catch(() => {}));
   }
 
   res.status(200).json({ start, end, total: SYMBOLS_100.length, signals });

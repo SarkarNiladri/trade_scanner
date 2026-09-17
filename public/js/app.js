@@ -5,6 +5,7 @@
     scanning: false,
     stopFlag: false,
     connected: false,
+    sentimentRefreshing: false,
   };
 
   /* ——— Theme ——— */
@@ -154,22 +155,36 @@
     document.getElementById('niftyBadge').textContent =
       `${(status.nifty_trend || 'neutral').toUpperCase()} · ADX ${status.nifty_adx ?? '—'}`;
   }
-
   async function loadSentiment() {
-    try {
-      const data = await api.getSentiment();
-      document.getElementById('sentimentUpdated').textContent =
-        data.updated_at ? `Updated: ${new Date(data.updated_at).toLocaleString('en-IN')}` : 'Not loaded';
-      let html = buildSentimentCard('📊 Overall Market', data.market);
-      for (const [sector, sdata] of Object.entries(data.sectors || {})) {
-        html += buildSentimentCard(sector, sdata);
-      }
-      document.getElementById('sentimentGrid').innerHTML =
-        html || '<div class="sentiment-empty">No data yet — click Re-analyze</div>';
-    } catch (e) {
-      logAdd('Sentiment load error: ' + e.message, 'error');
+  try {
+    const data = await api.getSentiment();
+    document.getElementById('sentimentUpdated').textContent =
+      data.updated_at ? `Updated: ${new Date(data.updated_at).toLocaleString('en-IN')}` : 'Not loaded';
+
+    let html = buildSentimentCard('📊 Overall Market', data.market);
+    for (const [sector, sdata] of Object.entries(data.sectors || {})) {
+      html += buildSentimentCard(sector, sdata);
     }
+    document.getElementById('sentimentGrid').innerHTML =
+      html || '<div class="sentiment-empty">Loading…</div>';
+
+    // Auto-refresh if cache is missing or older than 30 minutes
+    const stale = !data.updated_at ||
+      (Date.now() - new Date(data.updated_at).getTime() > 30 * 60 * 1000);
+
+    if (stale && !state.sentimentRefreshing) {
+      state.sentimentRefreshing = true;
+      logAdd('Sentiment cache stale — auto-refreshing in background…', 'info');
+      await api.forceSentiment();
+      setTimeout(async () => {
+        state.sentimentRefreshing = false;
+        await loadSentiment();
+      }, 35000);
+    }
+  } catch (e) {
+    logAdd('Sentiment load error: ' + e.message, 'error');
   }
+}
 
   async function forceSentimentRefresh() {
     try {
