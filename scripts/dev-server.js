@@ -1,4 +1,5 @@
-// server.js — local dev runner that mimics Vercel's routing for /api/*.js handlers
+// scripts/dev-server.js
+// Local dev runner that mimics Vercel's routing for /api/*.js handlers.
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -6,8 +7,10 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.join(__dirname, '..');
+const PORT   = process.env.PORT || 3000;
 const PUBLIC = path.join(PROJECT_ROOT, 'public');
 const API    = path.join(PROJECT_ROOT, 'api');
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css':  'text/css; charset=utf-8',
@@ -25,8 +28,17 @@ function makeRes(nodeRes) {
     status(code)      { statusCode = code; return this; },
     setHeader(k, v)   { headers[k] = v;    return this; },
     json(obj)         { nodeRes.writeHead(statusCode, headers); nodeRes.end(JSON.stringify(obj)); },
-    send(body)        { nodeRes.writeHead(statusCode, headers); nodeRes.end(typeof body === 'string' ? body : JSON.stringify(body)); },
-    end()             { nodeRes.writeHead(statusCode, headers); nodeRes.end(); },
+    send(body) {
+    nodeRes.writeHead(statusCode, headers);
+    if (Buffer.isBuffer(body)) {
+    nodeRes.end(body);
+    } else if (typeof body === 'string') {
+    nodeRes.end(body);
+    } else {
+    nodeRes.end(JSON.stringify(body));
+    }
+  },
+    end()   { nodeRes.writeHead(statusCode, headers); nodeRes.end(); },
   };
 }
 
@@ -47,7 +59,7 @@ const server = http.createServer(async (req, res) => {
     // ── API routing ─────────────────────────────────────────────
     if (pathname.startsWith('/api/')) {
       let route = pathname.slice(5).replace(/\/+$/, '');
-      if (route === 'keepalive') route = 'keep-alive';       // vercel.json rewrite
+      if (route === 'keepalive') route = 'keep-alive';       // rewrite
       if (!route || route.includes('..')) {
         res.writeHead(400, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ error: 'bad route' }));

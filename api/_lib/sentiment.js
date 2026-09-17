@@ -2,7 +2,7 @@ import { getSector } from './data.js';
 import { kvGetJSON, kvSetJSON } from './kv.js';
 
 const KEY = 'sentiment:cache';
-const TTL = 1800;
+const TTL = 3 * 3600;   // 3 hours — sentiment doesn't change fast enough to justify shorter
 
 const SECTOR_FEEDS = {
   MARKET:  "https://news.google.com/rss/search?q=India+stock+market+Sensex+Nifty+BSE+NSE&hl=en-IN&gl=IN&ceid=IN:en",
@@ -20,7 +20,7 @@ function stripCDATA(s) {
   return s.replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '').trim();
 }
 
-function parseRSS(xml, max = 6) {
+function parseRSS(xml, max = 5) {
   const titles = [];
   const re = /<item[\s>][\s\S]*?<\/item>/g;
   let m;
@@ -34,36 +34,51 @@ function parseRSS(xml, max = 6) {
   return titles;
 }
 
-async function fetchHeadlines(url, max = 6) {
+async function fetchHeadlines(url, max = 5) {
   try {
     const resp = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SwingScan/2.0)' },
     });
     if (!resp.ok) return [];
-    const xml = await resp.text();
-    return parseRSS(xml, max);
+    return parseRSS(await resp.text(), max);
   } catch (e) {
     console.error('[sentiment] feed:', e.message);
     return [];
   }
 }
 
-// ——— OpenAI sentiment classifier ———
-async function callLLM(headlines, context) {
-  if (!headlines.length) {
-    return { sentiment: 'NEUTRAL', confidence: 50, reason: 'No headlines', headlines: [] };
+// ——— ONE OpenAI call for ALL sectors ———
+async function classifyAll(headlinesBySector) {
+  const key = process.env.OPENAI_API_KEY;
+
+  const fallback = {};
+  for (const name of Object.keys(headlinesBySector)) {
+    fallback[name] = {
+      sentiment: 'NEUTRAL',
+      confidence: 50,
+      reason: key ? 'Parse error' : 'OpenAI not configured',
+      headlines: headlinesBySector[name],
+    };
   }
 
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) {
-    return { sentiment: 'NEUTRAL', confidence: 50, reason: 'OpenAI not configured', headlines };
-  }
+  if (!key) return fallback;
+
+  const sections = Object.entries(headlinesBySector)
+    .map(([name, hs]) => `### ${name}\n${hs.length ? hs.map(h => `- ${h}`).join('\n') : '(no headlines)'}`)
+    .join('\n\n');
 
   const prompt =
-    `Analyze these Indian stock market headlines for ${context} sentiment.\n` +
-    `Headlines:\n` + headlines.map(h => `- ${h}`).join('\n') +
-    `\n\nReply ONLY with valid JSON (no markdown):\n` +
-    `{"sentiment": "BULLISH|BEARISH|NEUTRAL", "confidence": 0-100, "reason": "one line max 10 words"}`;
+    `You are classifying Indian stock market sentiment for multiple sectors.\n\n` +
+    `For each section below, decide BULLISH, BEARISH, or NEUTRAL, assign a 0-100 confidence, ` +
+    `and give a one-line reason (max 10 words).\n\n` +
+    `${sections}\n\n` +
+    `Reply with ONLY this JSON shape (no markdown, no extra text):\n` +
+    `{\n` +
+    `  "MARKET":  { "sentiment": "BULLISH|BEARISH|NEUTRAL", "confidence": 0-100, "reason": "..." },\n` +
+    `  "Banking": { "sentiment": "...", "confidence": ..., "reason": "..." },\n` +
+    `  "IT":      { ... },\n` +
+    `  ...one entry per section above...\n` +
+    `}`;
 
   try {
     const resp = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -74,7 +89,7 @@ async function callLLM(headlines, context) {
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
-        max_tokens: 120,
+        max_tokens: 800,
         temperature: 0.2,
         response_format: { type: 'json_object' },
         messages: [
@@ -85,25 +100,30 @@ async function callLLM(headlines, context) {
     });
 
     if (!resp.ok) {
-      const errText = await resp.text();
-      console.error('[sentiment] openai:', resp.status, errText);
-      return { sentiment: 'NEUTRAL', confidence: 50, reason: `API ${resp.status}`, headlines };
+      console.error('[sentiment] openai:', resp.status, await resp.text());
+      return fallback;
     }
 
     const data = await resp.json();
     let text = data.choices?.[0]?.message?.content || '';
     text = text.replace(/```json/g, '').replace(/```/g, '').trim();
-
     const parsed = JSON.parse(text);
-    if (!['BULLISH', 'BEARISH', 'NEUTRAL'].includes(parsed.sentiment)) {
-      parsed.sentiment = 'NEUTRAL';
+
+    const out = {};
+    for (const name of Object.keys(headlinesBySector)) {
+      const row = parsed[name] || {};
+      const sent = ['BULLISH', 'BEARISH', 'NEUTRAL'].includes(row.sentiment) ? row.sentiment : 'NEUTRAL';
+      out[name] = {
+        sentiment: sent,
+        confidence: Math.max(0, Math.min(100, parseInt(row.confidence, 10) || 50)),
+        reason: row.reason || '',
+        headlines: headlinesBySector[name],
+      };
     }
-    parsed.confidence = Math.max(0, Math.min(100, parseInt(parsed.confidence, 10) || 50));
-    parsed.headlines = headlines;
-    return parsed;
+    return out;
   } catch (e) {
     console.error('[sentiment] openai parse:', e.message);
-    return { sentiment: 'NEUTRAL', confidence: 50, reason: 'Parse error', headlines };
+    return fallback;
   }
 }
 
@@ -124,14 +144,23 @@ export async function getCached() {
 }
 
 export async function refreshSentiment() {
-  const marketHeadlines = await fetchHeadlines(SECTOR_FEEDS.MARKET, 8);
-  const market = await callLLM(marketHeadlines, 'overall Indian stock market');
+  // Fetch all headlines in parallel
+  const allNames = Object.keys(SECTOR_FEEDS);
+  const allHeadlines = await Promise.all(
+    allNames.map(name => fetchHeadlines(SECTOR_FEEDS[name], name === 'MARKET' ? 8 : 5))
+  );
 
+  const headlinesBySector = {};
+  allNames.forEach((name, i) => { headlinesBySector[name] = allHeadlines[i]; });
+
+  // ONE OpenAI call for everything
+  const classified = await classifyAll(headlinesBySector);
+
+  const market = classified.MARKET;
   const sectors = {};
-  for (const [name, url] of Object.entries(SECTOR_FEEDS)) {
+  for (const name of allNames) {
     if (name === 'MARKET') continue;
-    const h = await fetchHeadlines(url, 6);
-    sectors[name] = await callLLM(h, `Indian ${name} sector stocks`);
+    sectors[name] = classified[name];
   }
 
   const payload = { _updated: Date.now(), market, sectors };

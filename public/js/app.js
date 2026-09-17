@@ -329,6 +329,41 @@ async function loadSentiment() {
     }
   }
 
+  async function exportSignals() {
+  try {
+    logAdd('Building Excel export…', 'info');
+
+    const url = api.auth ? api.auth('/api/tracker?action=export') : '/api/tracker?action=export';
+    const resp = await fetch(url);
+
+    if (resp.status === 404) {
+      logAdd('Nothing to export yet — no trades logged', 'warn');
+      return;
+    }
+    if (!resp.ok) {
+      logAdd(`Export failed: ${resp.status}`, 'error');
+      return;
+    }
+
+    const blob = await resp.blob();
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const match = cd.match(/filename="([^"]+)"/);
+    const filename = match ? match[1] : 'swingscan_signals.xlsx';
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+
+    logAdd(`✅ Exported ${filename}`, 'success');
+  } catch (e) {
+    logAdd('Export error: ' + e.message, 'error');
+  }
+  }
+
   /* ——— Tabs ——— */
   function switchTab(name) {
     document.querySelectorAll('.tab').forEach(t =>
@@ -352,7 +387,7 @@ async function loadSentiment() {
   window.app = {
     init, startScan, stopScan,
     loadSentiment, forceSentimentRefresh,
-    fetchTracker, resolveTrades, resetTracker,
+    fetchTracker, resolveTrades, resetTracker,exportSignals,
     switchTab,
     clearLog() { document.getElementById('logBody').innerHTML = ''; },
   };

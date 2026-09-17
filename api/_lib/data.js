@@ -32,17 +32,15 @@ export function getSector(symbol) {
   return SECTOR_MAP[symbol.toUpperCase()] || "General";
 }
 
-// ——— Direct Yahoo Finance fetcher (no yahoo-finance2) ———
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
+const CACHE = new Map();
 
-// Range mapping — Yahoo caps 15m to 60 days
 function rangeFor(interval, days) {
   if (interval === '15m') {
     if (days <= 5)  return '5d';
     if (days <= 30) return '1mo';
     return '60d';
   }
-  // daily
   if (days <= 30)  return '1mo';
   if (days <= 90)  return '3mo';
   if (days <= 180) return '6mo';
@@ -50,16 +48,14 @@ function rangeFor(interval, days) {
   return '2y';
 }
 
-// Small in-memory cache so repeated scans don't hammer Yahoo
-const CACHE = new Map();
-const CACHE_TTL_MS = interval === '1d' ? 6 * 3600 * 1000 : 60 * 1000;
-
 export async function fetchCandles(symbol, interval = '15m', days = 60) {
   const ticker = symbol.startsWith('^') ? symbol : `${symbol}.NS`;
   const cacheKey = `${ticker}|${interval}`;
   const now = Date.now();
+  const ttl = interval === '1d' ? 6 * 3600 * 1000 : 60 * 1000;
+
   const hit = CACHE.get(cacheKey);
-  if (hit && now - hit.t < CACHE_TTL_MS) return hit.data;
+  if (hit && now - hit.t < ttl) return hit.data;
 
   const range = rangeFor(interval, days);
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=${interval}&range=${range}&includePrePost=false`;
