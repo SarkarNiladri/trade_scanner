@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
-import { getTrades, resetWeek, resolveOpenTrades } from './_lib/tracker.js';
+import { getTrades, getAllTrades, resetWeek, resolveOpenTrades } from './_lib/tracker.js';
 
-// ─── Excel export ────────────────────────────────────────────────────
+// ─── Excel export helpers ────────────────────────────────────────────
 function rsiZone(rsi) {
   if (rsi < 35) return 0;
   if (rsi < 50) return 1;
@@ -22,13 +22,10 @@ function buildRow(t) {
   const label = t.outcome === 'WIN' ? 1 : t.outcome === 'LOSS' ? 0 : '';
 
   return {
-    // ── identifiers ──
     symbol:    t.symbol,
     date:      t.date,
     time:      t.time,
     hour,
-
-    // ── raw signal ──
     signal:    t.signal,
     entry,
     target:    tgt,
@@ -36,8 +33,6 @@ function buildRow(t) {
     score:     Number(t.score),
     adx:       Number(t.adx),
     rsi:       Number(t.rsi),
-
-    // ── derived features (match train_model.py) ──
     is_sell:   t.signal === 'SELL' ? 1 : 0,
     is_hour_10: hour === 10 ? 1 : 0,
     is_hour_11: hour === 11 ? 1 : 0,
@@ -49,35 +44,27 @@ function buildRow(t) {
     rsi_zone:   rsiZone(Number(t.rsi)),
     sl_pct:     Math.round(slPct * 100) / 100,
     tgt_pct:    Math.round(tgtPct * 100) / 100,
-
-    // ── outcome ──
     outcome:     t.outcome || 'OPEN',
     pnl_pct:     t.pnl_pct ?? '',
     resolved_at: t.resolved_at || '',
     source:      t.source || 'yfinance',
-
-    // ── ML target ──
     label,
   };
 }
 
 function buildWorkbook(trades) {
   const rows = trades.map(buildRow);
-
   const wb = XLSX.utils.book_new();
 
-  // Sheet 1: full data
   const ws = XLSX.utils.json_to_sheet(rows);
   XLSX.utils.book_append_sheet(wb, ws, 'Signals');
 
-  // Sheet 2: training-only (WIN/LOSS rows only)
   const trainRows = rows.filter(r => r.label === 0 || r.label === 1);
   if (trainRows.length) {
     const wsTrain = XLSX.utils.json_to_sheet(trainRows);
     XLSX.utils.book_append_sheet(wb, wsTrain, 'Training');
   }
 
-  // Sheet 3: summary
   const wins   = rows.filter(r => r.label === 1).length;
   const losses = rows.filter(r => r.label === 0).length;
   const open   = rows.filter(r => r.label === '').length;
@@ -102,28 +89,21 @@ export default async function handler(req, res) {
   const action = req.query.action;
 
   if (req.method === 'POST') {
-    if (action === 'reset')   { await resetWeek();        return res.status(200).json({ ok: true }); }
-    if (action === 'resolve') { const r = await resolveOpenTrades(); return res.status(200).json({ ok: true, ...r }); }
+    if (action === 'reset')   { await resetWeek();                    return res.status(200).json({ ok: true }); }
+    if (action === 'resolve') { const r = await resolveOpenTrades();  return res.status(200).json({ ok: true, ...r }); }
     return res.status(400).json({ error: 'unknown action' });
   }
 
-  // GET ?action=export → Excel file
   if (action === 'export') {
     try {
       const trades = await getTrades();
-      if (!trades.length) {
-        return res.status(404).json({ error: 'No trades to export yet' });
-      }
-
+      if (!trades.length) return res.status(404).json({ error: 'No trades to export yet' });
       const wb = buildWorkbook(trades);
       const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-
       const stamp = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
       const filename = `swingscan_signals_${stamp}.xlsx`;
-
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.setHeader('Content-Length', String(buf.length));
       return res.status(200).send(buf);
     } catch (e) {
       console.error('[tracker] export failed:', e);
@@ -131,7 +111,23 @@ export default async function handler(req, res) {
     }
   }
 
-  // GET default → JSON summary
+  if (action === 'export-all') {
+    try {
+      const trades = await getAllTrades();
+      if (!trades.length) return res.status(404).json({ error: 'No trades in archive yet' });
+      const wb = buildWorkbook(trades);
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      const stamp = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+      const filename = `swingscan_archive_${stamp}.xlsx`;
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      return res.status(200).send(buf);
+    } catch (e) {
+      console.error('[tracker] archive export failed:', e);
+      return res.status(500).json({ error: 'Archive export failed: ' + e.message });
+    }
+  }
+
   const trades = await getTrades();
   const wins   = trades.filter(t => t.outcome === 'WIN').length;
   const losses = trades.filter(t => t.outcome === 'LOSS').length;

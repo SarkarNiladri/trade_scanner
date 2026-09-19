@@ -3,6 +3,7 @@ import { SYMBOLS_100 } from './_lib/data.js';
 import { analyzeStock, getNiftyTrend } from './_lib/strategy.js';
 import { addTrade, hasNotified, markNotified } from './_lib/tracker.js';
 import { sendTelegram } from './_lib/telegram.js';
+import { resolveOpenTrades } from './_lib/tracker.js';
 
 const BATCH = 5;
 
@@ -38,7 +39,12 @@ export default async function handler(req, res) {
       console.error(`[cron] ${SYMBOLS_100[i]}:`, e.message);
     }
   }
-
+    try {
+      const resolved = await resolveOpenTrades();
+      if (resolved.resolved > 0) console.log(`[cron] resolved ${resolved.resolved} trades`);
+  } catch (e) {
+    console.error('[cron] resolve failed:', e.message);
+  }
   // Chain next batch in background — waitUntil keeps the function alive
   if (end < SYMBOLS_100.length) {
     const url = `https://${req.headers.host}/api/cron?start=${end}`;

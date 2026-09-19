@@ -7,11 +7,16 @@
     "node": "24.x"
   },
   "scripts": {
-    "dev": "node --env-file=.env.local scripts/dev-server.js"
+    "dev": "node --env-file=.env.local scripts/dev-server.js",
+    "test:indicators": "node scripts/test-indicators.js",
+    "backtest": "node --env-file=.env.local scripts/backtest.js",
+    "backtest:meanrev": "node --env-file=.env.local scripts/backtest-meanrev.js"
   },
   "dependencies": {
     "@upstash/redis": "^1.34.3",
     "@vercel/functions": "^3.9.8",
     "xlsx": "^0.18.5"
   }
+
+  
 }

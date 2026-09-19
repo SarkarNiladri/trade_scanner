@@ -59,3 +59,35 @@ export async function kvSetJSON(key, value, opts) {
   // Store as JSON string so both Upstash and in-memory behave identically
   return kvSet(key, JSON.stringify(value), opts);
 }
+
+// Atomic set-if-not-exists with TTL — used for locks
+export async function kvSetNX(key, value, exSec = 5) {
+  warnOnce();
+  if (redis) {
+    try {
+      const result = await redis.set(key, value, { nx: true, ex: exSec });
+      return result === 'OK';
+    } catch (e) {
+      console.error('[kv] setnx:', e.message);
+      return false;
+    }
+  }
+  // In-memory: JS is single-threaded so this is atomic within one instance
+  if (mem.has(key)) return false;
+  mem.set(key, value);
+  setTimeout(() => mem.delete(key), exSec * 1000);
+  return true;
+}
+
+export async function withLock(lockKey, fn, { ttl = 5, maxAttempts = 20 } = {}) {
+  const key = `lock:${lockKey}`;
+  for (let i = 0; i < maxAttempts; i++) {
+    const got = await kvSetNX(key, '1', ttl);
+    if (got) {
+      try { return await fn(); }
+      finally { await kvDel(key); }
+    }
+    await new Promise(r => setTimeout(r, 50 + Math.random() * 100));
+  }
+  throw new Error(`withLock: could not acquire lock for ${lockKey}`);
+}

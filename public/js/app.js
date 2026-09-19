@@ -319,7 +319,7 @@ async function loadSentiment() {
   }
 
   async function resetTracker() {
-    if (!confirm("Reset this week's trades?")) return;
+    if (!confirm("Archive this week's trades and start fresh?")) return;
     try {
       await api.resetTrades();
       await fetchTracker();
@@ -345,24 +345,40 @@ async function loadSentiment() {
       return;
     }
 
-    const blob = await resp.blob();
-    const cd = resp.headers.get('Content-Disposition') || '';
-    const match = cd.match(/filename="([^"]+)"/);
-    const filename = match ? match[1] : 'swingscan_signals.xlsx';
+      const blob = await resp.blob();
+      const cd = resp.headers.get('Content-Disposition') || '';
+      const match = cd.match(/filename="([^"]+)"/);
+      const filename = match ? match[1] : 'swingscan_signals.xlsx';
 
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(a.href);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
 
-    logAdd(`✅ Exported ${filename}`, 'success');
+      logAdd(`✅ Exported ${filename}`, 'success');
   } catch (e) {
     logAdd('Export error: ' + e.message, 'error');
   }
   }
+
+  async function exportArchive() {
+    const pwd = localStorage.getItem('swingscan_api_pwd') || '';
+    const url = pwd
+    ? `/api/tracker?action=export-all&api_key=${encodeURIComponent(pwd)}`
+    : '/api/tracker?action=export-all';
+    const resp = await fetch(url);
+    if (resp.status === 404) { logAdd('No archive yet', 'warn'); return; }
+    const blob = await resp.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `swingscan_archive_${new Date().toISOString().slice(0,10)}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    logAdd('✅ Archive exported', 'success');
+}
 
   /* ——— Tabs ——— */
   function switchTab(name) {
@@ -387,7 +403,7 @@ async function loadSentiment() {
   window.app = {
     init, startScan, stopScan,
     loadSentiment, forceSentimentRefresh,
-    fetchTracker, resolveTrades, resetTracker,exportSignals,
+    fetchTracker, resolveTrades, resetTracker,exportSignals,exportArchive,
     switchTab,
     clearLog() { document.getElementById('logBody').innerHTML = ''; },
   };

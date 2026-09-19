@@ -41,12 +41,17 @@ function rangeFor(interval, days) {
     if (days <= 30) return '1mo';
     return '60d';
   }
+  // daily intervals
   if (days <= 30)  return '1mo';
   if (days <= 90)  return '3mo';
   if (days <= 180) return '6mo';
   if (days <= 365) return '1y';
-  return '2y';
+  if (days <= 730) return '2y';
+  if (days <= 1825) return '5y';
+  return '10y';
 }
+
+
 
 export async function fetchCandles(symbol, interval = '15m', days = 60) {
   const ticker = symbol.startsWith('^') ? symbol : `${symbol}.NS`;
