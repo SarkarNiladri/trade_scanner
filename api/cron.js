@@ -29,9 +29,10 @@ export default async function handler(req, res) {
       const sig = await analyzeStock(SYMBOLS_100[i], trend);
       if (!sig) continue;
       signals++;
-      await addTrade(sig);
-      const fp = `${sig.symbol}|${sig.signal}|${sig.entry}|${sig.target}|${sig.stop_loss}`;
-      if (!(await hasNotified(fp))) {
+      const isNew = await addTrade(sig);
+      // One alert per symbol + direction + day (price-based keys re-alerted every scan)
+      const fp = `${sig.symbol}|${sig.signal}|${new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10)}`;
+      if (isNew && !(await hasNotified(fp))) {
         await sendTelegram(sig);
         await markNotified(fp);
       }

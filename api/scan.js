@@ -15,9 +15,10 @@ export default async function handler(req, res) {
     const signal = await analyzeStock(symbol, niftyTrend);
 
     if (signal) {
-      await addTrade(signal);
-      const fp = `${signal.symbol}|${signal.signal}|${signal.entry}|${signal.target}|${signal.stop_loss}`;
-      if (!(await hasNotified(fp))) {
+      const isNew = await addTrade(signal);
+      // One alert per symbol + direction + day (price-based keys re-alerted every scan)
+      const fp = `${signal.symbol}|${signal.signal}|${new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10)}`;
+      if (isNew && !(await hasNotified(fp))) {
         await sendTelegram(signal);
         await markNotified(fp);
       }

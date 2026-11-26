@@ -14,9 +14,11 @@ function mondayISO() {
   return now.toISOString().slice(0, 10);
 }
 
-// api/_lib/tracker.js — replace ensureCurrentWeek with:
-
 const KEY_ARCHIVE = 'trades:archive';
+const BAR_MS = 15 * 60_000;
+// Bumped when the grading logic changes; trades graded by an older version
+// (or never graded by this one) are re-checked once.
+const GRADER_VERSION = 2;
 
 async function ensureCurrentWeek() {
   const cur = mondayISO();
@@ -46,16 +48,40 @@ export async function getTrades() {
   return (await kvGetJSON(KEY_TRADES, [])) || [];
 }
 
+// One trade per symbol + direction + IST day. The old id included the entry
+// price, which changes on every scan, so one setup was logged many times.
+function tradeId(symbol, side, istDate) {
+  return `${symbol}_${side}_${istDate}`;
+}
+
+function istDateNow() {
+  return new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10);
+}
+
+// Entry time in ms. Trades saved before this fix have no entry_ts, so rebuild
+// it from their IST date + time fields.
+function entryTs(t) {
+  if (Number.isFinite(t.entry_ts)) return t.entry_ts;
+  const hhmmss = String(t.time || '').slice(0, 8);
+  const ts = Date.parse(`${t.date}T${hhmmss}+05:30`);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+// Returns true if a new trade was added, false if this setup is already logged today.
 export async function addTrade(signal) {
   await ensureCurrentWeek();
   return withLock('trades', async () => {
     const trades = (await kvGetJSON(KEY_TRADES, [])) || [];
-    const id = `${signal.symbol}_${signal.signal}_${signal.entry}_${signal.target}_${signal.stop_loss}`;
-    if (trades.some(t => t.id === id)) return;
+    const date = istDateNow();
+    const id = tradeId(signal.symbol, signal.signal, date);
+    if (trades.some(t => t.id === id || (t.symbol === signal.symbol && t.signal === signal.signal && t.date === date))) {
+      return false;
+    }
 
     const entry = Number(signal.entry);
     const sl    = Number(signal.stop_loss);
     const tgt   = Number(signal.target);
+    const now   = Date.now();
 
     trades.push({
       id,
@@ -65,12 +91,14 @@ export async function addTrade(signal) {
       score: signal.score,
       adx: signal.adx,
       rsi: signal.rsi,
-      hour: new Date().getUTCHours() + 5,
+      hour: new Date(now + 5.5 * 3600_000).getUTCHours(),
       sl_pct:  entry > 0 ? Math.round(Math.abs(entry - sl) / entry * 10000) / 100 : 0,
       tgt_pct: entry > 0 ? Math.round(Math.abs(tgt - entry) / entry * 10000) / 100 : 0,
       source: 'yfinance',
       time: signal.time,
-      date: new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(0, 10),
+      date,
+      entry_ts: now,
+      grader: GRADER_VERSION,
       outcome: 'OPEN',
       resolved_at: null,
       pnl_pct: null,
@@ -78,6 +106,7 @@ export async function addTrade(signal) {
     });
 
     await kvSetJSON(KEY_TRADES, trades);
+    return true;
   });
 }
 
@@ -95,38 +124,65 @@ export async function resetWeek() {
   });
 }
 
+// Pure: grade one trade against 15m candles. Only candles that START after the
+// entry time and have fully CLOSED are used. The old code scanned the last
+// ~260 candles, including days before the signal, so a BUY in an uptrend was
+// almost always marked LOSS by an earlier, lower close.
+export function gradeTrade(t, candles, now = Date.now()) {
+  const ts = entryTs(t);
+  if (ts == null) return null;
+  for (const c of candles) {
+    const start = c.date instanceof Date ? c.date.getTime() : new Date(c.date).getTime();
+    if (start < ts) continue;               // before / during the entry bar
+    if (start + BAR_MS > now) break;        // still forming
+    // If one candle hits both levels we can't know which came first: count it
+    // as a loss (conservative). SL is on close, target on wick, as before.
+    if (t.signal === 'BUY') {
+      if (c.close <= t.stop_loss) return { outcome: 'LOSS', exit: t.stop_loss, pnl: (t.stop_loss - t.entry) / t.entry * 100, at: start };
+      if (c.high  >= t.target)    return { outcome: 'WIN',  exit: t.target,    pnl: (t.target - t.entry) / t.entry * 100,    at: start };
+    } else {
+      if (c.close >= t.stop_loss) return { outcome: 'LOSS', exit: t.stop_loss, pnl: (t.entry - t.stop_loss) / t.entry * 100, at: start };
+      if (c.low   <= t.target)    return { outcome: 'WIN',  exit: t.target,    pnl: (t.entry - t.target) / t.entry * 100,    at: start };
+    }
+  }
+  return null;
+}
+
 export async function resolveOpenTrades() {
   return withLock('trades', async () => {
     const trades = await getTrades();
-    const open = trades.filter(t => t.outcome === 'OPEN');
-    if (!open.length) return { checked: 0, resolved: 0 };
+    // Open trades, plus anything graded by the old (buggy) logic.
+    const todo = trades.filter(t => t.outcome === 'OPEN' || (t.grader || 1) < GRADER_VERSION);
+    if (!todo.length) return { checked: 0, resolved: 0, regraded: 0 };
 
-    let resolvedCount = 0;
+    let resolvedCount = 0, regraded = 0;
 
-    for (const t of open) {
+    for (const t of todo) {
       try {
         const df = await fetchCandles(t.symbol, '15m', 10);
         if (!df.length) continue;
 
-        const recent = df.slice(-260);
-        let outcome = null, pnl = 0;
+        const wasClosed = t.outcome !== 'OPEN';
+        const r = gradeTrade(t, df);
+        t.grader = GRADER_VERSION;
+        if (wasClosed) regraded++;
 
-        for (const c of recent) {
-          if (t.signal === 'BUY') {
-            if (c.close <= t.stop_loss) { outcome = 'LOSS'; pnl = (t.stop_loss - t.entry) / t.entry * 100; break; }
-            if (c.high  >= t.target)    { outcome = 'WIN';  pnl = (t.target - t.entry) / t.entry * 100;    break; }
-          } else {
-            if (c.close >= t.stop_loss) { outcome = 'LOSS'; pnl = (t.entry - t.stop_loss) / t.entry * 100; break; }
-            if (c.low   <= t.target)    { outcome = 'WIN';  pnl = (t.entry - t.target) / t.entry * 100;    break; }
+        if (r) {
+          const changed = t.outcome !== r.outcome;
+          t.outcome = r.outcome;
+          t.exit = Math.round(r.exit * 100) / 100;
+          t.pnl_pct = Math.round(r.pnl * 100) / 100;
+          t.resolved_at = new Date(r.at + BAR_MS + 5.5 * 3600_000).toISOString().slice(11, 19) + ' IST';
+          if (!wasClosed) {
+            resolvedCount++;
+            notifyOutcome(t, r.outcome, r.pnl).catch(() => {});
+          } else if (changed) {
+            resolvedCount++;
           }
-        }
-
-        if (outcome) {
-          t.outcome = outcome;
-          t.pnl_pct = Math.round(pnl * 100) / 100;
-          t.resolved_at = new Date(Date.now() + 5.5 * 3600_000).toISOString().slice(11, 19) + ' IST';
-          resolvedCount++;
-          notifyOutcome(t, outcome, pnl).catch(() => {});
+        } else {
+          // Not hit yet (an old LOSS that was never really hit goes back to OPEN).
+          t.outcome = 'OPEN';
+          t.exit = null; t.pnl_pct = null; t.resolved_at = null;
         }
       } catch (e) {
         console.error(`[tracker] ${t.symbol}:`, e.message);
@@ -134,7 +190,7 @@ export async function resolveOpenTrades() {
     }
 
     await kvSetJSON(KEY_TRADES, trades);
-    return { checked: open.length, resolved: resolvedCount };
+    return { checked: todo.length, resolved: resolvedCount, regraded };
   });
 }
 
